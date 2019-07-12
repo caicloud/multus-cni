@@ -28,6 +28,7 @@ const (
 	checkPointfile = "/var/lib/kubelet/device-plugins/kubelet_internal_checkpoint"
 )
 
+// PodDevicesEntry maps PodUID, resource name and allocated device id
 type PodDevicesEntry struct {
 	PodUID        string
 	ContainerName string
@@ -41,7 +42,7 @@ type checkpointData struct {
 	RegisteredDevices map[string][]string
 }
 
-type Data struct {
+type checkpointFileData struct {
 	Data     checkpointData
 	Checksum uint64
 }
@@ -70,7 +71,7 @@ func getCheckpoint(filePath string) (types.ResourceClient, error) {
 // getPodEntries gets all Pod device allocation entries from checkpoint file
 func (cp *checkpoint) getPodEntries() error {
 
-	cpd := &Data{}
+	cpd := &checkpointFileData{}
 	rawBytes, err := ioutil.ReadFile(cp.fileName)
 	if err != nil {
 		return logging.Errorf("getPodEntries(): error reading file %s\n%v\n", checkPointfile, err)
@@ -93,7 +94,6 @@ func (cp *checkpoint) GetPodResourceMap(pod *v1.Pod) (map[string]*types.Resource
 	if podID == "" {
 		return nil, logging.Errorf("GetPodResourceMap(): invalid Pod cannot be empty")
 	}
-
 	for _, pod := range cp.podEntires {
 		if pod.PodUID == podID {
 			entry, ok := resourceMap[pod.ResourceName]

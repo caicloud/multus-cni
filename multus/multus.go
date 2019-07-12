@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -155,7 +156,7 @@ func conflistAdd(rt *libcni.RuntimeConf, rawnetconflist []byte, binDir string, e
 		return nil, logging.Errorf("error in converting the raw bytes to conflist: %v", err)
 	}
 
-	result, err := cniNet.AddNetworkList(confList, rt)
+	result, err := cniNet.AddNetworkList(context.Background(), confList, rt)
 	if err != nil {
 		return nil, logging.Errorf("error in getting result from AddNetworkList: %v", err)
 	}
@@ -175,7 +176,7 @@ func conflistDel(rt *libcni.RuntimeConf, rawnetconflist []byte, binDir string, e
 		return logging.Errorf("error in converting the raw bytes to conflist: %v", err)
 	}
 
-	err = cniNet.DelNetworkList(confList, rt)
+	err = cniNet.DelNetworkList(context.Background(), confList, rt)
 	if err != nil {
 		return logging.Errorf("error in getting result from DelNetworkList: %v", err)
 	}
@@ -237,7 +238,7 @@ func delegateAdd(exec invoke.Exec, ifName string, delegate *types.DelegateNetCon
 			return nil, logging.Errorf("Multus: error in invoke Conflist add - %q: %v", delegate.ConfList.Name, err)
 		}
 	} else {
-		result, err = invoke.DelegateAdd(delegate.Conf.Type, delegate.Bytes, exec)
+		result, err = invoke.DelegateAdd(context.Background(), delegate.Conf.Type, delegate.Bytes, exec)
 		if err != nil {
 			return nil, logging.Errorf("Multus: error in invoke Delegate add - %q: %v", delegate.Conf.Type, err)
 		}
@@ -281,7 +282,7 @@ func delegateDel(exec invoke.Exec, ifName string, delegateConf *types.DelegateNe
 			return logging.Errorf("Multus: error in invoke Conflist Del - %q: %v", delegateConf.ConfList.Name, err)
 		}
 	} else {
-		if err = invoke.DelegateDel(delegateConf.Conf.Type, delegateConf.Bytes, exec); err != nil {
+		if err = invoke.DelegateDel(context.Background(), delegateConf.Conf.Type, delegateConf.Bytes, exec); err != nil {
 			return logging.Errorf("Multus: error in invoke Delegate del - %q: %v", delegateConf.Conf.Type, err)
 		}
 	}
@@ -416,15 +417,13 @@ func cmdGet(args *skel.CmdArgs, exec invoke.Exec, kubeClient k8s.KubeClient) (cn
 }
 
 func cmdDel(args *skel.CmdArgs, exec invoke.Exec, kubeClient k8s.KubeClient) error {
-	in, err := types.LoadNetConf(args.StdinData)
 	logging.Debugf("cmdDel: %v, %v, %v", args, exec, kubeClient)
+	in, err := types.LoadNetConf(args.StdinData)
 	if err != nil {
 		return err
 	}
 
-	if args.Netns == "" {
-		return nil
-	}
+	netnsfound := true
 	netns, err := ns.GetNS(args.Netns)
 	if err != nil {
 		// if NetNs is passed down by the Cloud Orchestration Engine, or if it called multiple times
@@ -432,7 +431,8 @@ func cmdDel(args *skel.CmdArgs, exec invoke.Exec, kubeClient k8s.KubeClient) err
 		// https://github.com/kubernetes/kubernetes/issues/43014#issuecomment-287164444
 		_, ok := err.(ns.NSPathNotExistErr)
 		if ok {
-			logging.Debugf("cmdDel: WARNING netns may not exist, netns: %s, err: %s", netns, err)
+			netnsfound = false
+			logging.Debugf("cmdDel: WARNING netns may not exist, netns: %s, err: %s", args.Netns, err)
 		} else {
 			return fmt.Errorf("failed to open netns %q: %v", netns, err)
 		}
@@ -479,6 +479,12 @@ func cmdDel(args *skel.CmdArgs, exec invoke.Exec, kubeClient k8s.KubeClient) err
 		if err := json.Unmarshal(netconfBytes, &in.Delegates); err != nil {
 			return logging.Errorf("Multus: failed to load netconf: %v", err)
 		}
+		// check plugins field and enable ConfListPlugin if there is
+		for _, v := range in.Delegates {
+			if len(v.ConfList.Plugins) != 0 {
+				v.ConfListPlugin = true
+			}
+		}
 		// First delegate is always the master plugin
 		in.Delegates[0].MasterPlugin = true
 
@@ -490,14 +496,26 @@ func cmdDel(args *skel.CmdArgs, exec invoke.Exec, kubeClient k8s.KubeClient) err
 		}
 	}
 
+	// set CNIVersion in delegate CNI config if there is no CNIVersion and multus conf have CNIVersion.
+	for _, v := range in.Delegates {
+		if v.ConfListPlugin == true && v.ConfList.CNIVersion == "" && in.CNIVersion != "" {
+			v.ConfList.CNIVersion = in.CNIVersion
+			v.Bytes, err = json.Marshal(v.ConfList)
+		}
+	}
+
 	// unset the network status annotation in apiserver, only in case Multus as kubeconfig
 	if in.Kubeconfig != "" {
-		if !types.CheckSystemNamespaces(string(k8sArgs.K8S_POD_NAMESPACE), in.SystemNamespaces) {
-			err := k8s.SetNetworkStatus(kubeClient, k8sArgs, nil, in)
-			if err != nil {
-				// error happen but continue to delete
-				logging.Errorf("Multus: Err unset the networks status: %v", err)
+		if netnsfound {
+			if !types.CheckSystemNamespaces(string(k8sArgs.K8S_POD_NAMESPACE), in.SystemNamespaces) {
+				err := k8s.SetNetworkStatus(kubeClient, k8sArgs, nil, in)
+				if err != nil {
+					// error happen but continue to delete
+					logging.Errorf("Multus: Err unset the networks status: %v", err)
+				}
 			}
+		} else {
+			logging.Debugf("WARNING: Unset SetNetworkStatus skipped due to netns not found.")
 		}
 	}
 
