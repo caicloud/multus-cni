@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -434,8 +435,11 @@ func TryLoadPodDelegates(k8sArgs *types.K8sArgs, conf *types.NetConf, kubeClient
 	// Get the pod info. If cannot get it, we use cached delegates
 	pod, err := kubeClient.GetPod(string(k8sArgs.K8S_POD_NAMESPACE), string(k8sArgs.K8S_POD_NAME))
 	if err != nil {
-		logging.Debugf("tryLoadK8sDelegates: Err in loading K8s cluster default network from pod annotation: %v, use cached delegates", err)
-		return 0, nil, nil
+		if k8serrors.IsNotFound(err) {
+			logging.Debugf("tryLoadK8sDelegates: Err in get pod %s %v", string(k8sArgs.K8S_POD_NAME), err)
+			return 0, nil, nil
+		}
+		return 0, nil, logging.Errorf("tryLoadK8sDelegates: Err in get pod %s %v", string(k8sArgs.K8S_POD_NAME), err)
 	}
 
 	delegate, err := tryLoadK8sPodDefaultNetwork(kubeClient, pod, conf)
