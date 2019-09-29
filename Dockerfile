@@ -1,5 +1,5 @@
 # This Dockerfile is used to build the image available on DockerHub
-FROM cargo.caicloudprivatetest.com/caicloud/debian:jessie
+FROM cargo.caicloud.xyz/library/debian:stretch
 
 
 Run mkdir -p /usr/src/multus-cni/bin/
