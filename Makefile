@@ -26,16 +26,16 @@
 #
 
 # This repo's root import path (under GOPATH).
-ROOT := github.com/caicloud/golang-template-project
+ROOT := github.com/intel/multus-cni
 
 # Target binaries. You can build multiple binaries for a single project.
-TARGETS := admin controller
+TARGETS := multus
 
 # Container image prefix and suffix added to targets.
 # The final built images are:
 #   $[REGISTRY]/$[IMAGE_PREFIX]$[TARGET]$[IMAGE_SUFFIX]:$[VERSION]
 # $[REGISTRY] is an item from $[REGISTRIES], $[TARGET] is an item from $[TARGETS].
-IMAGE_PREFIX ?= $(strip template-)
+IMAGE_PREFIX ?= $(strip )
 IMAGE_SUFFIX ?= $(strip )
 
 # Container registries.
@@ -55,7 +55,7 @@ export SHELL := /bin/bash
 export SHELLOPTS := errexit
 
 # Project main package location (can be multiple ones).
-CMD_DIR := ./cmd
+CMD_DIR := .
 
 # Project output directory.
 OUTPUT_DIR := ./bin
@@ -84,6 +84,11 @@ GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
 # All targets.
 .PHONY: lint test build container push
 
+.PHONY: pre-build
+pre-build:
+	@test -h gopath/src/$(ROOT) ||                                                     \
+		( mkdir -p gopath/src/$(dir $(ROOT)) && ln -s ../../../.. gopath/src/$(ROOT) ) \
+
 build: build-local
 
 # more info about `GOGC` env: https://github.com/golangci/golangci-lint#memory-usage-of-golangci-lint
@@ -93,19 +98,20 @@ lint: $(GOLANGCI_LINT)
 $(GOLANGCI_LINT):
 	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(BIN_DIR) v1.16.0
 
-test:
-	@go test -p $(CPUS) $$(go list ./... | grep -v /vendor | grep -v /test) -coverprofile=coverage.out
-	@go tool cover -func coverage.out | tail -n 1 | awk '{ print "Total coverage: " $$3 }'
+test: pre-build
+	@export GOPATH=$(PWD)/gopath; umask 0; cd $${GOPATH}/src/$(ROOT);                  \
+		go test -v -covermode=count -coverprofile=coverage.out ./...
 
-build-local:
+build-local: pre-build
 	@for target in $(TARGETS); do                                                      \
+	  GOPATH=$(PWD)/gopath                                                             \
 	  go build -i -v -o $(OUTPUT_DIR)/$${target} -p $(CPUS)                            \
 	  -ldflags "-s -w -X $(ROOT)/pkg/version.VERSION=$(VERSION)                        \
 	    -X $(ROOT)/pkg/version.REPOROOT=$(ROOT)"                                       \
-	  $(CMD_DIR)/$${target};                                                           \
+	  $(ROOT)/$(CMD_DIR)/$${target};                                                   \
 	done
 
-build-linux:
+build-linux: pre-build
 	@docker run --rm -t                                                                \
 	  -v $(PWD):/go/src/$(ROOT)                                                        \
 	  -w /go/src/$(ROOT)                                                               \
@@ -118,7 +124,7 @@ build-linux:
 	      go build -i -v -o $(OUTPUT_DIR)/$${target} -p $(CPUS)                        \
 	        -ldflags "-s -w -X $(ROOT)/pkg/version.VERSION=$(VERSION)                  \
 	          -X $(ROOT)/pkg/version.REPOROOT=$(ROOT)"                                 \
-	        $(CMD_DIR)/$${target};                                                     \
+	        $(ROOT)/$(CMD_DIR)/$${target};                                             \
 	    done'
 
 container: build-linux
@@ -126,7 +132,7 @@ container: build-linux
 	  image=$(IMAGE_PREFIX)$${target}$(IMAGE_SUFFIX);                                  \
 	  docker build -t $(REGISTRY)/$${image}:$(VERSION)                                 \
 	    --label $(DOCKER_LABELS)                                                       \
-	    -f $(BUILD_DIR)/$${target}/Dockerfile .;                                       \
+	    -f ./Dockerfile .;                                                             \
 	done
 
 push: container
@@ -134,6 +140,9 @@ push: container
 	  image=$(IMAGE_PREFIX)$${target}$(IMAGE_SUFFIX);                                  \
 	  docker push $(REGISTRY)/$${image}:$(VERSION);                                    \
 	done
+
+lint:
+	@echo "skip lint"
 
 .PHONY: clean
 clean:
