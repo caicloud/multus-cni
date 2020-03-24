@@ -36,7 +36,7 @@ TARGETS := multus
 #   $[REGISTRY]/$[IMAGE_PREFIX]$[TARGET]$[IMAGE_SUFFIX]:$[VERSION]
 # $[REGISTRY] is an item from $[REGISTRIES], $[TARGET] is an item from $[TARGETS].
 IMAGE_PREFIX ?= $(strip )
-IMAGE_SUFFIX ?= $(strip )
+IMAGE_SUFFIX ?= $(strip -cni)
 
 # Container registry for base images.
 BASE_REGISTRY ?= cargo.caicloud.xyz/library
