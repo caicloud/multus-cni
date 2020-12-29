@@ -26,7 +26,7 @@
 #
 
 # This repo's root import path (under GOPATH).
-ROOT := github.com/intel/multus-cni
+ROOT := github.com/caicloud/multus-cni
 
 # Target binaries. You can build multiple binaries for a single project.
 TARGETS := multus
@@ -74,6 +74,8 @@ BUILD_DIR := ./build
 
 # Current version of the project.
 VERSION ?= $(shell git describe --tags --always --dirty)
+GITCOMMIT ?= $(shell git rev-parse HEAD)
+BUILDDATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Available cpus for compiling, please refer to https://github.com/caicloud/engineering/issues/8186#issuecomment-518656946 for more information.
 CPUS ?= $(shell /bin/bash hack/read_cpus_available.sh)
@@ -93,11 +95,6 @@ GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
 # All targets.
 .PHONY: lint test build container push
 
-.PHONY: pre-build
-pre-build:
-	@test -h gopath/src/$(ROOT) ||                                                     \
-		( mkdir -p gopath/src/$(dir $(ROOT)) && ln -s ../../../.. gopath/src/$(ROOT) ) \
-
 build: build-local
 
 # more info about `GOGC` env: https://github.com/golangci/golangci-lint#memory-usage-of-golangci-lint
@@ -108,21 +105,18 @@ $(GOLANGCI_LINT):
 	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(BIN_DIR) v1.23.6
 
 test:
-e2e-test: pre-build
+e2e-test:
 	@export GOPATH=$(PWD)/gopath; umask 0; cd $${GOPATH}/src/$(ROOT);                  \
 		go test -v -covermode=count -coverprofile=coverage.out ./...
 
-build-local: pre-build
-	@for target in $(TARGETS); do                                                      \
-	  GOPATH=$(PWD)/gopath                                                             \
-	  go build -i -v -o $(OUTPUT_DIR)/$${target} -p $(CPUS)                            \
-	  -ldflags "-s -w -X $(ROOT)/pkg/version.VERSION=$(VERSION)                        \
-	    -X $(ROOT)/pkg/version.REPOROOT=$(ROOT)"                                       \
-	  $(ROOT)/$(CMD_DIR)/$${target};                                                   \
-	done
+build-local:
+	go build -v -o $(OUTPUT_DIR)/multus -mod=vendor -p $(CPUS)                   \
+	  -ldflags "-s -w -X main.version=$(VERSION)                        \
+	  -X main.commit=$(GITCOMMIT) -X main.date=$(BUILDDATE)"                       \
+	  ./cmd;                                                   \
 
-build-linux: pre-build
-	@docker run --rm -t                                                                \
+build-linux:
+	@docker run --rm -t --net=none                                                     \
 	  -v $(PWD):/go/src/$(ROOT)                                                        \
 	  -w /go/src/$(ROOT)                                                               \
 	  -e GOOS=linux                                                                    \
@@ -130,12 +124,10 @@ build-linux: pre-build
 	  -e GOPATH=/go                                                                    \
 	  -e SHELLOPTS=$(SHELLOPTS)                                                        \
 	  $(BASE_REGISTRY)/golang:1.13-security                                            \
-	    /bin/bash -c 'for target in $(TARGETS); do                                     \
-	      go build -i -v -o $(OUTPUT_DIR)/$${target} -p $(CPUS)                        \
-	        -ldflags "-s -w -X $(ROOT)/pkg/version.VERSION=$(VERSION)                  \
-	          -X $(ROOT)/pkg/version.REPOROOT=$(ROOT)"                                 \
-	        $(ROOT)/$(CMD_DIR)/$${target};                                             \
-	    done'
+	    go build -i -v -o $(OUTPUT_DIR)/multus -p $(CPUS) -mod=vendor                  \
+	        -ldflags "-s -w -X main.version=$(VERSION)                                 \
+	        -X main.commit=$(GITCOMMIT) -X main.date=$(BUILDDATE)"                     \
+	        ./cmd;
 
 container: build-linux
 	@for target in $(TARGETS); do                                                      \
